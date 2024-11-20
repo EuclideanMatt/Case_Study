@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="UTF-8"?><sqlb_project><db path="C:/Users/Epicm/Desktop/data_bases/2U/data/2u_sql.db" readonly="0" foreign_keys="1" case_sensitive_like="0" temp_store="0" wal_autocheckpoint="1000" synchronous="2"/><attached/><window><main_tabs open="structure browser pragmas query" current="3"/></window><tab_structure><column_width id="0" width="300"/><column_width id="1" width="0"/><column_width id="2" width="125"/><column_width id="3" width="1423"/><column_width id="4" width="0"/><expanded_item id="0" parent="1"/><expanded_item id="1" parent="1"/><expanded_item id="2" parent="1"/><expanded_item id="3" parent="1"/><expanded_item id="4" parent="1"/></tab_structure><tab_browse><current_table name="4,24:main2u_takehome_case_cleaned"/><default_encoding codec=""/><browse_table_settings><table schema="main" name="2u_takehome_case_cleaned" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_"><sort/><column_widths><column index="1" value="83"/><column index="2" value="67"/><column index="3" value="66"/><column index="4" value="73"/><column index="5" value="148"/><column index="6" value="65"/><column index="7" value="55"/><column index="8" value="123"/><column index="9" value="241"/><column index="10" value="139"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table><table schema="main" name="bid_quality" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_"><sort/><column_widths><column index="1" value="84"/><column index="2" value="134"/><column index="3" value="124"/><column index="4" value="300"/><column index="5" value="119"/><column index="6" value="117"/><column index="7" value="117"/><column index="8" value="157"/><column index="9" value="57"/><column index="10" value="59"/><column index="11" value="115"/><column index="12" value="127"/><column index="13" value="81"/><column index="14" value="162"/><column index="15" value="186"/><column index="16" value="173"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table><table schema="main" name="conversions_audiencesegment" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_"><sort/><column_widths><column index="1" value="93"/><column index="2" value="134"/><column index="3" value="115"/><column index="4" value="182"/><column index="5" value="300"/><column index="6" value="192"/><column index="7" value="115"/><column index="8" value="84"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table><table schema="main" name="performance_state" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_"><sort/><column_widths><column index="1" value="84"/><column index="2" value="153"/><column index="3" value="57"/><column index="4" value="59"/><column index="5" value="127"/><column index="6" value="52"/><column index="7" value="74"/><column index="8" value="115"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table></browse_table_settings></tab_browse><tab_sql><sql name="SQL 6">-- Table created to answer questions --
+
+DROP TABLE IF EXISTS bee;
+
+
+CREATE TEMP TABLE bee AS
+
+WITH ProgramAssumptions AS (
+    SELECT
+        id,
+        program,
+        CASE 
+            WHEN program = 'program_a' THEN 0.40
+            WHEN program = 'program_b' THEN 0.30
+        END AS conversion_rate,
+        CASE 
+            WHEN program = 'program_a' THEN 35000
+            WHEN program = 'program_b' THEN 40000
+        END AS revenue_per_student
+		
+    FROM &quot;2u_takehome_case_cleaned&quot;
+),
+ConversionRates_CTE AS (
+    SELECT
+        id,
+        program,
+        lead_track,
+        ROUND(CAST(started_apps AS FLOAT) / CAST(leads AS FLOAT), 3) AS started_app_rate,
+        ROUND(CAST(predicted_submitted_apps AS FLOAT) / CAST(started_apps AS FLOAT), 2) AS submitted_app_rate,
+        ROUND(CAST(predicted_submitted_apps AS FLOAT) / CAST(leads AS FLOAT), 2) AS student_rate
+    FROM 
+        &quot;2u_takehome_case_cleaned&quot;
+),
+CostPerStudent_CTE AS (
+    SELECT 
+        main.id,
+        pa.program,
+        main.spend AS spend,
+        main.predicted_submitted_apps AS predicted_apps,
+        ROUND(main.predicted_submitted_apps * pa.conversion_rate, 2) AS estimated_students,
+        ROUND((main.Spend / main.predicted_submitted_apps) * pa.conversion_rate, 2) AS cost_per_student
+    FROM 
+        &quot;2u_takehome_case_cleaned&quot; AS main
+    JOIN 
+        ProgramAssumptions AS pa
+    ON 
+        main.id = pa.id
+),
+CostPerLead_CTE AS (
+    SELECT 
+        main.id,
+        main.Spend,
+        main.Leads,
+        ROUND(main.Spend / main.Leads, 2) AS cost_per_lead,
+        ROUND((pa.revenue_per_student * pa.conversion_rate) - cps.cost_per_student, 2) AS high,
+		ROUND((pa.revenue_per_student * pa.conversion_rate) + cps.cost_per_student, 2) AS low,
+        ROUND(((main.Spend / main.Leads) - ((pa.revenue_per_student * pa.conversion_rate) - cps.cost_per_student)) / 
+        ((pa.revenue_per_student * con.student_rate) - cps.cost_per_student) * 100, 2) AS per
+    FROM 
+        &quot;2u_takehome_case_cleaned&quot; AS main
+    JOIN 
+        ProgramAssumptions AS pa
+    ON 
+        main.id = pa.id
+    JOIN 
+        ConversionRates_CTE AS con 
+    ON 
+        main.id = con.id
+    JOIN 
+        CostPerStudent_CTE AS cps
+    ON 
+        main.id = cps.id
+)
+SELECT 
+    main.*,
+    cpl.cost_per_lead,
+    cps.estimated_students,
+    cps.cost_per_student,
+    cr.started_app_rate,
+    cr.submitted_app_rate,
+    cr.student_rate,
+    cpl.high,
+	cpl.low,
+    cpl.per
+FROM 
+    &quot;2u_takehome_case_cleaned&quot; AS main
+JOIN 
+    CostPerLead_CTE AS cpl
+ON 
+    main.id = cpl.id
+JOIN 
+    ProgramAssumptions AS pa
+ON 
+    main.id = pa.id
+JOIN 
+    CostPerStudent_CTE AS cps
+ON 
+    main.id = cps.id
+JOIN 
+    ConversionRates_CTE AS cr
+ON 
+    main.id = cr.id;
+
+
+
+----------
+SECTION 1
+----------
+
+SELECT 
+    program,
+    quarter,
+    lead_track,
+    ROUND(AVG(COALESCE(cost_per_student, 0)), 2) AS cost_per_student,
+    ROUND(SUM(COALESCE(predicted_submitted_apps, 0)),2) AS predicted_submitted_apps,
+    ROUND(SUM(COALESCE(spend, 0)),2) AS total_spend
+FROM 
+    bee
+WHERE 
+    quarter NOT LIKE '%-2020%'
+GROUP BY 
+    program,
+    quarter,
+    lead_track
+;
+
+
+
+	
+----------	
+SECTION 2
+----------
+
+SELECT 
+	program,
+	lead_track,
+	ROUND(AVG(started_app_rate),2) AS started_app_rate,
+	ROUND(AVG(submitted_app_rate),2) AS submitted_app_rate,
+	ROUND(AVG(student_rate),2) AS student_rate
+FROM bee
+WHERE quarter NOT LIKE '%-2020%'
+GROUP BY program, lead_track
+
+
+;
+
+
+
+----------
+SECTION 3
+----------
+
+SELECT 
+	program,
+	lead_track,
+	ROUND(AVG(cost_per_lead),2) AS cpl_actual,
+	ROUND(AVG(high),2) AS max_prof,
+	ROUND(AVG(per),2) AS percent_dif
+FROM bee
+WHERE quarter NOT LIKE '%-2020%'
+GROUP BY program, lead_track
+
+
+
+---- BONUS -----
+
+SELECT 
+	program,
+	lead_track,
+	ROUND(AVG(cost_per_lead),2) AS cpl_actual,
+	ROUND(AVG(low),2) AS low_prof ,
+	ROUND(AVG(high),2) AS max_prof
+FROM bee
+WHERE quarter LIKE '%01-%'
+GROUP BY program, lead_track
+
+
+
+---------
+SECTION 4
+---------
+
+
+--- program a ----
+
+SELECT
+	lead_track,
+	ROUND(SUM(COALESCE(spend, 0)/12), 2) AS avg_monthly_spend,
+	ROUND(AVG(COALESCE(cost_per_lead,0)),2) AS cpl_actual
+	
+FROM bee
+WHERE program = 'program_a' 
+GROUP BY lead_track
+
+
+
+--
+
+SELECT
+	lead_track,
+	ROUND(AVG(COALESCE(spend, 0)), 2) AS avg_monthly_spend,
+	ROUND(AVG(COALESCE(cost_per_lead,0)),2) AS cpl_actual
+	
+FROM bee
+WHERE program = 'program_a' AND quarter = '01-2022'
+GROUP BY lead_track
+
+
+
+SELECT 
+	SUM(spend)/4,
+	SUM(leads),
+	lead_track,
+	ROUND(AVG(cost_per_lead),2),
+	ROUND(AVG(started_app_rate),2),
+	ROUND(AVG(COALESCE(submitted_app_rate,0)),2),
+	ROUND(AVG(student_rate),2)
+FROM bee
+WHERE program = 'program_a' 
+	AND quarter LIKE '%01-%'
+	AND quarter NOT LIKE '%-2022%'
+GROUP BY lead_track
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</sql><current_tab id="0"/></tab_sql></sqlb_project>
